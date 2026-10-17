@@ -1,10 +1,17 @@
+import dotenv from 'dotenv';
+dotenv.config();
+
 import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
+import User from './models/User.js';
+import authRoutes from './routes/authRoutes.js';
+import authMiddleware from './middleware/authMiddleware.js';
+import validateTaskInput from './middleware/validateTaskInput.js';
 
 const app = express();
 const PORT = process.env.PORT || 5001;
-const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/AWDF_PR';
+const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/AWDF_PR_7';
 
 // Enable CORS and JSON middleware
 app.use(cors());
@@ -32,11 +39,11 @@ const taskSchema = new mongoose.Schema(
 
 const Task = mongoose.model('Task', taskSchema);
 
-// Connect to MongoDB database: AWDF_PR
+// Connect to MongoDB database: AWDF_PR_7
 mongoose
   .connect(MONGODB_URI)
   .then(async () => {
-    console.log('Connected to MongoDB database: AWDF_PR');
+    console.log('Connected to MongoDB database: AWDF_PR_7');
     const count = await Task.countDocuments();
     if (count === 0) {
       await Task.insertMany([
@@ -44,12 +51,16 @@ mongoose
         { title: 'Build Express REST API', description: 'Create CRUD endpoints with Express and CORS', priority: 'Medium' },
         { title: 'Connect Frontend to Backend with Fetch', description: 'Use async fetch to sync React state with MongoDB', priority: 'Low' }
       ]);
-      console.log('Seeded initial tasks into AWDF_PR database');
+      console.log('Seeded initial tasks into AWDF_PR_7 database');
     }
   })
   .catch((err) => {
     console.error('MongoDB connection error:', err.message);
   });
+
+// Authentication Routes (/register, /login, /me, /api/register, /api/login, /api/me)
+app.use('/api', authRoutes);
+app.use('/', authRoutes);
 
 // Helper to support both /tasks and /api/tasks routes
 const handleGetTasks = async (req, res) => {
@@ -60,14 +71,11 @@ const handleGetTasks = async (req, res) => {
     res.status(500).json({ error: 'Failed to fetch tasks', details: err.message });
   }
 };
-app.get('/tasks', handleGetTasks);
-app.get('/api/tasks', handleGetTasks);
+app.get('/tasks', authMiddleware, handleGetTasks);
+app.get('/api/tasks', authMiddleware, handleGetTasks);
 
 const handlePostTask = async (req, res) => {
   const { title, description, priority } = req.body;
-  if (!title || !title.trim()) {
-    return res.status(400).json({ error: 'Title is required' });
-  }
 
   try {
     const newTask = await Task.create({
@@ -80,8 +88,8 @@ const handlePostTask = async (req, res) => {
     res.status(500).json({ error: 'Failed to create task', details: err.message });
   }
 };
-app.post('/tasks', handlePostTask);
-app.post('/api/tasks', handlePostTask);
+app.post('/tasks', authMiddleware, validateTaskInput, handlePostTask);
+app.post('/api/tasks', authMiddleware, validateTaskInput, handlePostTask);
 
 const handlePutTask = async (req, res) => {
   const { id } = req.params;
@@ -109,8 +117,8 @@ const handlePutTask = async (req, res) => {
     res.status(500).json({ error: 'Failed to update task', details: err.message });
   }
 };
-app.put('/tasks/:id', handlePutTask);
-app.put('/api/tasks/:id', handlePutTask);
+app.put('/tasks/:id', authMiddleware, validateTaskInput, handlePutTask);
+app.put('/api/tasks/:id', authMiddleware, validateTaskInput, handlePutTask);
 
 const handleDeleteTask = async (req, res) => {
   const { id } = req.params;
@@ -127,14 +135,14 @@ const handleDeleteTask = async (req, res) => {
     res.status(500).json({ error: 'Failed to delete task', details: err.message });
   }
 };
-app.delete('/tasks/:id', handleDeleteTask);
-app.delete('/api/tasks/:id', handleDeleteTask);
+app.delete('/tasks/:id', authMiddleware, handleDeleteTask);
+app.delete('/api/tasks/:id', authMiddleware, handleDeleteTask);
 
 // Health check endpoint
 app.get('/health', (req, res) => {
   res.json({
     status: 'Server running',
-    database: 'AWDF_PR',
+    database: 'AWDF_PR_7',
     dbConnected: mongoose.connection.readyState === 1
   });
 });
