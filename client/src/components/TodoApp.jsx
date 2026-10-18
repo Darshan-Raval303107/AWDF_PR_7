@@ -368,27 +368,54 @@ export default function TodoApp() {
           To-Do <span className="gradient-text">Manager</span>
         </h2>
       </div>
-      
-      {/* Environment & Connection Badges */}
-      <div className="todo-badges">
-        <span className="badge server-badge">
-          <Server size={14} /> Port: 5001
-        </span>
-        <span className="badge db-badge">
-          <Database size={14} /> DB: AWDF_PR_7
-        </span>
-        <span className="badge status-badge">
-          {dbStatus}
-        </span>
-        {currentUser && (
-          <span className="badge user-badge" style={{ borderColor: 'rgba(168, 85, 247, 0.4)', color: '#c084fc', display: 'inline-flex', alignItems: 'center', gap: '5px' }}>
-            <UserIcon size={14} /> {currentUser.username || currentUser.email}
-          </span>
-        )}
-        <button onClick={() => fetchTasks(true)} className="refresh-btn" title="Refresh Tasks from MongoDB">
-          <RefreshCw size={13} className={loading ? 'spinning' : ''} />
-        </button>
-      </div>
+
+      {/* Prominent Active User Banner */}
+      {currentUser && (
+        <div className="todo-user-banner glass-card">
+          <div className="todo-user-banner-left">
+            <div className="todo-user-avatar">
+              {(currentUser.username || currentUser.email || 'U').charAt(0).toUpperCase()}
+            </div>
+            <div className="todo-user-info">
+              <div className="todo-user-pill-row">
+                <span className="todo-user-pill">
+                  <ShieldCheck size={12} /> Logged In User
+                </span>
+                <span className="todo-user-session-dot" title="Active Session">
+                  <span className="pulse-dot"></span> Active
+                </span>
+              </div>
+              <h3 className="todo-user-username" title={currentUser.username || currentUser.email}>
+                {currentUser.username || 'User'}
+              </h3>
+              {currentUser.email && (
+                <span className="todo-user-email">{currentUser.email}</span>
+              )}
+            </div>
+          </div>
+
+          <div className="todo-user-banner-right">
+            <button
+              type="button"
+              onClick={() => fetchTasks(true)}
+              className="todo-sync-btn"
+              title="Refresh Tasks from MongoDB"
+              disabled={loading}
+            >
+              <RefreshCw size={14} className={loading ? 'spinning' : ''} />
+              <span>Refresh</span>
+            </button>
+            <button
+              onClick={() => logout('You have been logged out.')}
+              className="todo-logout-btn"
+              title="Logout from account"
+            >
+              <X size={14} />
+              <span>Sign Out</span>
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* Total / Completed / Pending Stats Bar (Horizontal) */}
       <div className="todo-stats-bar">
