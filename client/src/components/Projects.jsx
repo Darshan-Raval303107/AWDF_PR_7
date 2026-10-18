@@ -24,7 +24,13 @@ const Projects = ({ setActiveTab }) => {
       setLoading(true);
       setError(null);
       const token = localStorage.getItem('token');
-      const headers = token ? { Authorization: `Bearer ${token}` } : {};
+      if (!token) {
+        setBackendTasks([]);
+        setError('Authentication required. Please log in via the Todo App tab to view backend tasks.');
+        setLoading(false);
+        return;
+      }
+      const headers = { Authorization: `Bearer ${token}` };
       
       let res;
       try {

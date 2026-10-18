@@ -1,15 +1,17 @@
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import { AnimatePresence } from 'framer-motion';
 import { Loader2 } from 'lucide-react';
 import Navbar from './components/Navbar';
 import Footer from './components/Footer';
 import Profile from './components/Profile';
-import About from './components/About';
-import Projects from './components/Projects';
-import Contact from './components/Contact';
-import TodoApp from './components/TodoApp';
 import Auth from './components/Auth';
 import { AuthProvider, useAuth } from './context/AuthContext';
+
+// Lazy-loaded non-initial views for Practical 8 Step 2 (Code Splitting)
+const About = lazy(() => import('./components/About'));
+const Projects = lazy(() => import('./components/Projects'));
+const Contact = lazy(() => import('./components/Contact'));
+const TodoApp = lazy(() => import('./components/TodoApp'));
 
 const MainLayout = () => {
   const [activeTab, setActiveTab] = useState('Profile');
@@ -45,11 +47,20 @@ const MainLayout = () => {
       {/* Premium Navbar with Auth controls */}
       <Navbar activeTab={activeTab} setActiveTab={setActiveTab} />
 
-      {/* Main Content Area with entrance transitions */}
+      {/* Main Content Area with entrance transitions and Suspense fallback */}
       <main className="main-content">
-        <AnimatePresence mode="wait">
-          {renderContent()}
-        </AnimatePresence>
+        <Suspense
+          fallback={
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', minHeight: '50vh', gap: '10px', color: '#94a3b8' }}>
+              <Loader2 size={24} className="spinning" />
+              <span>Loading page...</span>
+            </div>
+          }
+        >
+          <AnimatePresence mode="wait">
+            {renderContent()}
+          </AnimatePresence>
+        </Suspense>
       </main>
 
       {/* Premium Footer */}
