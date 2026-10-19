@@ -4,6 +4,7 @@ dotenv.config();
 import express from 'express';
 import cors from 'cors';
 import mongoose from 'mongoose';
+import NodeCache from 'node-cache';
 import User from './models/User.js';
 import authRoutes from './routes/authRoutes.js';
 import authMiddleware from './middleware/authMiddleware.js';
@@ -12,6 +13,10 @@ import validateTaskInput from './middleware/validateTaskInput.js';
 const app = express();
 const PORT = process.env.PORT || 5001;
 const MONGODB_URI = process.env.MONGODB_URI || 'mongodb://127.0.0.1:27017/AWDF_PR_7';
+
+// Initialize in-memory cache with standard TTL of 60 seconds
+const taskCache = new NodeCache({ stdTTL: 60 });
+const CACHE_KEY_TASKS = 'tasks_list';
 
 // Enable CORS and JSON middleware
 app.use(cors());
@@ -62,10 +67,18 @@ mongoose
 app.use('/api', authRoutes);
 app.use('/', authRoutes);
 
-// Helper to support both /tasks and /api/tasks routes
+// Helper to support both /tasks and /api/tasks routes with in-memory caching
 const handleGetTasks = async (req, res) => {
   try {
+    const cachedTasks = taskCache.get(CACHE_KEY_TASKS);
+    if (cachedTasks !== undefined) {
+      res.set('X-Cache', 'HIT');
+      return res.json(cachedTasks);
+    }
+
     const tasks = await Task.find().sort({ createdAt: 1 });
+    taskCache.set(CACHE_KEY_TASKS, tasks);
+    res.set('X-Cache', 'MISS');
     res.json(tasks);
   } catch (err) {
     res.status(500).json({ error: 'Failed to fetch tasks', details: err.message });
@@ -83,6 +96,10 @@ const handlePostTask = async (req, res) => {
       description: description ? description.trim() : '',
       priority: priority && ['Low', 'Medium', 'High'].includes(priority) ? priority : 'Low'
     });
+
+    // Invalidate task-list cache after successful write
+    taskCache.del(CACHE_KEY_TASKS);
+
     res.status(201).json(newTask);
   } catch (err) {
     res.status(500).json({ error: 'Failed to create task', details: err.message });
@@ -112,6 +129,9 @@ const handlePutTask = async (req, res) => {
       return res.status(404).json({ error: 'Task not found' });
     }
 
+    // Invalidate task-list cache after successful update
+    taskCache.del(CACHE_KEY_TASKS);
+
     res.json(updatedTask);
   } catch (err) {
     res.status(500).json({ error: 'Failed to update task', details: err.message });
@@ -129,6 +149,9 @@ const handleDeleteTask = async (req, res) => {
     if (!deletedTask) {
       return res.status(404).json({ error: 'Task not found' });
     }
+
+    // Invalidate task-list cache after successful deletion
+    taskCache.del(CACHE_KEY_TASKS);
 
     res.json({ message: 'Task deleted successfully' });
   } catch (err) {

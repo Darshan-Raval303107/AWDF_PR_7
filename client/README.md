@@ -210,5 +210,108 @@ To observe the Suspense loading fallback under constrained network conditions:
 - **Analysis**: Even though the existing task list and stats counts have not changed, updating `inputTitle` re-evaluates the whole `TodoApp` component tree.
 - **Future Optimization**: Separating the task creation form into its own isolated subcomponent or wrapping individual task cards with `React.memo` will eliminate these keystroke re-renders.
 
+---
+
+# Practical 9: In-Memory Caching and Query Optimization
+
+## 1. Overview and Purpose of In-Memory Caching
+In-memory caching is a high-performance optimization strategy that stores frequently accessed query results directly in the server's random-access memory (RAM). In a typical web architecture, database queries involve:
+- Network round-trips between the Express application server and MongoDB.
+- B-tree indexing/collection scans and document deserialization on the database engine.
+- Transformation into JSON objects.
+
+By serving repeated, read-heavy requests directly from memory, in-memory caching:
+- Drastically reduces database query load and connection pressure.
+- Eliminates redundant I/O bottlenecks.
+- Minimizes response latency from tens or hundreds of milliseconds down to near-instantaneous memory retrieval (<10 ms).
+
+## 2. Implementation Architecture
+- **Caching Library**: `node-cache` (v5.1.2)
+- **Cache Scope & Storage**: Local Node.js process heap memory.
+- **Configured TTL (Time-To-Live)**: `stdTTL: 60` (60 seconds).
+- **Cache Key Strategy**:
+  - `const CACHE_KEY_TASKS = 'tasks_list'`: A stable, standardized cache key mapped to the full task-list query.
+- **Target Endpoints**:
+  - `GET /tasks` & `GET /api/tasks` (Protected by `authMiddleware`)
+- **Response Headers**:
+  - `X-Cache: HIT` indicates response was served directly from memory cache.
+  - `X-Cache: MISS` indicates cache was empty/expired; data was fetched from MongoDB and populated into the cache.
+
+### Invalidation Strategy
+To prevent serving stale data to clients, cache invalidation is executed using `taskCache.del('tasks_list')` **strictly after** a successful database mutation:
+- **`POST /tasks` & `POST /api/tasks`**: Cache is cleared immediately after a new task is inserted.
+- **`PUT /tasks/:id` & `PUT /api/tasks/:id`**: Cache is cleared after the task update is verified and saved.
+- **`DELETE /tasks/:id` & `DELETE /api/tasks/:id`**: Cache is cleared after the task is removed from MongoDB.
+- **Error Safety**: If a write fails validation or returns 404 (Task not found), the cache is preserved intact.
+
+---
+
+## 3. Performance Measurement & Baseline Comparison
+
+### A. Pre-Optimization Baseline (Uncached MongoDB Queries)
+*Server queried MongoDB on every request without caching:*
+- **Request 1**: 132 ms (HTTP 200 OK)
+- **Request 2**: 117 ms (HTTP 200 OK)
+- **Request 3**: 117 ms (HTTP 200 OK)
+- **Uncached Baseline Average**: **122 ms**
+
+### B. Post-Optimization Measurements (With In-Memory Caching)
+*Measured via Postman with JWT Bearer Token:*
+
+| Request # | Target Endpoint | Cache State (`X-Cache`) | HTTP Status | Response Time (ms) | Notes / Observations |
+| :---: | :---: | :---: | :---: | :---: | :---: |
+| **Request 1** | `GET /tasks` | `MISS` | 200 OK | _[Enter reading from Screenshot 1, e.g. ~115 ms]_ | Cache miss; queried MongoDB and stored in memory |
+| **Request 2** | `GET /tasks` | `HIT` | 200 OK | _[Enter reading from Screenshot 2, e.g. ~5-15 ms]_ | Cache hit; served directly from RAM without DB query |
+| **Request 3** | `GET /tasks` | `HIT` | 200 OK | _[Enter reading from Screenshot 3, e.g. ~5-15 ms]_ | Cache hit; served directly from RAM |
+| **Average (Hits)**| `GET /tasks` | `HIT` | 200 OK | **_[Average of Hits ms]_** | Significant reduction compared to 122 ms baseline |
+
+> **Note on Comparison**: When you enter your exact measured numbers into the table above, the percentage improvement can be calculated using:
+> $$\text{Latency Improvement (\%)} = \left(\frac{\text{Baseline (122 ms)} - \text{Cached Hit Avg}}{\text{Baseline (122 ms)}}\right) \times 100\%$$
+
+---
+
+## 4. Verification & Testing Procedure
+
+### Step 1: Start Backend Server
+```bash
+cd server
+npm run dev
+```
+
+### Step 2: Authenticate & Obtain Token
+Send a `POST` request to `http://localhost:5001/login` with your credentials to obtain an active JWT token.
+
+### Step 3: Test Cache Miss followed by Cache Hit
+1. In Postman, configure `GET http://localhost:5001/tasks` with header `Authorization: Bearer <token>`.
+2. Send request: Header returns `X-Cache: MISS` (database round-trip).
+3. Send request again within 60 seconds: Header returns `X-Cache: HIT` with drastically lower latency.
+
+### Step 4: Verify Cache Invalidation on Mutations
+1. Send a `POST http://localhost:5001/tasks` or `PUT http://localhost:5001/tasks/:id`.
+2. Immediately send `GET http://localhost:5001/tasks`.
+3. Notice that `X-Cache` is reset to `MISS`, confirming the cache was purged and new data was pulled from MongoDB.
+
+---
+
+## 5. Answers to Practical Questions
+
+### Question 1: Why is cache invalidation important?
+**Answer**:
+Cache invalidation ensures **data consistency** between the caching layer and the primary database. If data is modified in MongoDB (via create, update, or delete operations) without clearing or updating the corresponding cache entry, subsequent read requests will continue serving stale, outdated data. Without timely invalidation, users would see incorrect task statuses, phantom tasks that were already deleted, or missing newly added tasks until the TTL arbitrarily expires.
+
+### Question 2: What is the trade-off when choosing a TTL (Time-To-Live)?
+**Answer**:
+Choosing a TTL is a balance between **data freshness** and **cache efficiency**:
+- **Short TTL (e.g., 5–15 seconds)**: Maximizes freshness and minimizes the window of stale data, but results in frequent cache misses, meaning the database must handle more query spikes.
+- **Long TTL (e.g., several minutes to hours)**: Maximizes cache hit ratio and database load reduction, but increases the duration stale data can persist if an invalidation event is missed or delayed, and consumes server RAM for longer periods.
+- A 60-second TTL combined with active event-driven invalidation on writes provides an optimal balance for interactive CRUD applications.
+
+### Question 3: Why is in-memory `node-cache` unsuitable for shared caching across multiple server instances?
+**Answer**:
+`node-cache` stores cached data inside the **local heap memory of a single Node.js process**. When an application scales horizontally across multiple servers or container instances behind a load balancer:
+1. **Isolated Memory Spaces**: Each instance maintains its own private, isolated cache. Instance A cannot see what Instance B cached.
+2. **Inconsistent State & Cache Invalidation Failure**: If a client sends a write request (`POST /tasks`) that is routed to Instance A, Instance A invalidates its local cache. However, Instance B's cache remains unchanged. Subsequent reads routed to Instance B will serve stale data.
+3. **Solution for Distributed Systems**: For multi-instance architectures, a distributed in-memory datastore such as **Redis** or **Memcached** should be used, enabling all application instances to share a single centralized, synchronized cache.
+
 
 
