@@ -9,6 +9,8 @@ import User from './models/User.js';
 import authRoutes from './routes/authRoutes.js';
 import authMiddleware from './middleware/authMiddleware.js';
 import validateTaskInput from './middleware/validateTaskInput.js';
+import taskEmitter from './events/taskEmitter.js';
+import './events/taskListeners.js';
 
 const app = express();
 const PORT = process.env.PORT || 5001;
@@ -100,7 +102,24 @@ const handlePostTask = async (req, res) => {
     // Invalidate task-list cache after successful write
     taskCache.del(CACHE_KEY_TASKS);
 
+    // Record and log API-response timestamp
+    const responseTimestamp = new Date().toISOString();
+    console.log(
+      `[${responseTimestamp}] [HTTP 201] Response sent for Task ID: ${newTask.id || newTask._id} | Title: "${newTask.title}"`
+    );
+
+    // Send HTTP 201 response immediately without waiting for background work
     res.status(201).json(newTask);
+
+    // Emit task-created event with created task and authenticated user context
+    taskEmitter.emit('task-created', {
+      task: newTask,
+      user: {
+        id: req.user?._id ? req.user._id.toString() : req.user?.id,
+        username: req.user?.username,
+        email: req.user?.email
+      }
+    });
   } catch (err) {
     res.status(500).json({ error: 'Failed to create task', details: err.message });
   }
@@ -154,6 +173,19 @@ const handleDeleteTask = async (req, res) => {
     taskCache.del(CACHE_KEY_TASKS);
 
     res.json({ message: 'Task deleted successfully' });
+
+    // Emit task-deleted event only after successful deletion with actual pre-deletion task info
+    taskEmitter.emit('task-deleted', {
+      task: {
+        id: deletedTask.id || deletedTask._id?.toString() || id,
+        title: deletedTask.title || 'Untitled'
+      },
+      user: {
+        id: req.user?._id ? req.user._id.toString() : req.user?.id,
+        username: req.user?.username,
+        email: req.user?.email
+      }
+    });
   } catch (err) {
     res.status(500).json({ error: 'Failed to delete task', details: err.message });
   }

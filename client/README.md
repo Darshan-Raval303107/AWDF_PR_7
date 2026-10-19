@@ -313,5 +313,149 @@ Choosing a TTL is a balance between **data freshness** and **cache efficiency**:
 2. **Inconsistent State & Cache Invalidation Failure**: If a client sends a write request (`POST /tasks`) that is routed to Instance A, Instance A invalidates its local cache. However, Instance B's cache remains unchanged. Subsequent reads routed to Instance B will serve stale data.
 3. **Solution for Distributed Systems**: For multi-instance architectures, a distributed in-memory datastore such as **Redis** or **Memcached** should be used, enabling all application instances to share a single centralized, synchronized cache.
 
+---
+
+# Practical 10: Asynchronous Processing with Event-Driven Architecture
+
+## 1. Objective & Event-Driven Overview
+The goal of Practical 10 is to decouple time-consuming background operations (such as notifications, logging, and audit tracking) from the synchronous HTTP request-response cycle using an **event-driven architecture**.
+
+### What is Node.js EventEmitter?
+Node.js's built-in `EventEmitter` (from the `node:events` module) implements the **Observer / Publish-Subscribe pattern**:
+- An **emitter** publishes a named event when a specific action occurs (`taskEmitter.emit('event-name', data)`).
+- One or more **listeners** subscribe to that event (`taskEmitter.on('event-name', callback)`) and execute their tasks independently.
+- By offloading non-critical work (like dispatching notifications) to asynchronous background handlers, the API can respond to clients immediately without waiting for background operations to finish.
+
+---
+
+## 2. Files Created and Modified
+
+| Action | File | Description |
+| :--- | :--- | :--- |
+| **Created** | `server/events/taskEmitter.js` | Instantiates and exports a shared singleton instance of `EventEmitter`. Registers an initial listener for the special `'error'` event to prevent unhandled exceptions from crashing the process. |
+| **Created** | `server/events/taskListeners.js` | Defines decoupled background listeners for `'task-created'` and `'task-deleted'`. Simulates background notification processing with a 2-second delay using `setTimeout`. Encloses execution in safe `try/catch` blocks and forwards background errors to the emitter's error channel. |
+| **Modified** | `server/server.js` | 1. Imports `taskEmitter` and `./events/taskListeners.js` at startup.<br>2. In `handlePostTask`, invalidates cache, logs the API response timestamp, sends HTTP 201 immediately, and emits `task-created` with task and user data.<br>3. In `handleDeleteTask`, after MongoDB deletion and cache invalidation, emits `task-deleted` with pre-deletion task details. |
+
+---
+
+## 3. Implementation Details & Architecture
+
+### A. Task Creation Flow & 2-Second Background Simulation
+```text
+Client Request: POST /tasks or POST /api/tasks
+   │
+   ├─► authMiddleware (Verify JWT & attach req.user)
+   ├─► validateTaskInput (Check title & priority)
+   ├─► Task.create() (Persist task in MongoDB)
+   ├─► taskCache.del('tasks_list') (Invalidate Practical 9 cache)
+   ├─► Record & Log API Response Timestamp [HTTP 201]
+   ├─► res.status(201).json(newTask) ───► CLIENT RECEIVES RESPONSE IMMEDIATELY (< 30ms)
+   │
+   └─► taskEmitter.emit('task-created', { task, user })
+          │
+          └─► [Listener] Logs Arrival Timestamp
+                 │
+                 └─► setTimeout(..., 2000) (Non-blocking timer in libuv event loop)
+                        │
+                        └─► 2 Seconds Later: Logs [BACKGROUND COMPLETED] Timestamp
+```
+
+### B. Supplementary `task-deleted` Event
+- **Trigger**: Handled in `handleDeleteTask` after `Task.findByIdAndDelete(id)` executes successfully.
+- **Guard**: If the task does not exist (`!deletedTask`) or an error occurs, the endpoint returns 404 or 500 without emitting the event.
+- **Payload**: Contains the task's ID and title captured before deletion, alongside authenticated user details (`username`/`email`).
+- **Listener**: The `task-deleted` listener logs the deletion event with a precise ISO timestamp.
+
+### C. Safe Error Handling
+- The emitter attaches an `'error'` listener upon instantiation in `taskEmitter.js`.
+- If an unhandled exception or background failure occurs in asynchronous notification callbacks, it is caught via `try/catch`, logged with `console.error`, and forwarded via `taskEmitter.emit('error', err)`.
+- Because the `'error'` listener is pre-registered, the server never encounters an unhandled `'error'` event or process crash.
+
+---
+
+## 4. How to Run the Backend Server
+
+To start the backend with ES module support:
+
+```bash
+cd server
+npm start
+```
+
+Or for development with automatic restart on file change:
+
+```bash
+cd server
+npm run dev
+```
+
+**Expected Startup Logs:**
+```text
+Event listeners registered: [task-created, task-deleted]
+Server running on http://localhost:5001
+Connected to MongoDB database: AWDF_PR_7
+```
+
+---
+
+## 5. Theory Questions & Answers
+
+### Question 1: Why does emitting an event not make the API wait for the delayed work?
+**Answer**:
+In Node.js, `taskEmitter.emit()` invokes registered listener functions synchronously. However, because our listener schedules the notification work inside an asynchronous timer API (`setTimeout`), the actual callback function is delegated to Node.js's underlying **libuv event loop timer queue**.
+
+The main thread executes `res.status(201).json(newTask)`, immediately flushing the HTTP response back to the client. The request completes within milliseconds, while the notification callback remains queued in the event loop and executes only after the 2-second timer expires.
+
+---
+
+### Question 2: What happens to response time if notification work runs directly inside the POST route?
+**Answer**:
+If notification work (e.g., sending emails, SMS, push alerts, or invoking third-party webhooks) is executed synchronously or awaited (`await sendNotification(...)`) directly inside the POST request handler:
+1. **Severe Latency Increase**: The HTTP response cannot be dispatched until the notification finishes, inflating API response time by the full duration of the notification (e.g., 2,000+ ms instead of < 25 ms).
+2. **Poor User Experience**: The client UI remains in a blocking "loading" state waiting for an ancillary operation that has no bearing on whether the task was saved.
+3. **Resource Starvation Under High Load**: Server connections, sockets, and memory stay tied up waiting for slow external I/O, drastically reducing the server's concurrent request throughput.
+
+---
+
+### Question 3: Why is EventEmitter reasonable for a small application but not necessarily for millions of production events per day?
+**Answer**:
+- **Why reasonable for small applications**:
+  - **Zero External Dependencies**: Built directly into Node.js (`node:events`), eliminating the operational complexity and cost of spinning up external message queues.
+  - **Zero Overhead**: In-memory message dispatch has negligible CPU and latency overhead for small-to-medium single-server workloads.
+- **Why unsuitable for millions of production events per day**:
+  - **Volatile / Non-Persistent**: Events and timers reside purely in the Node.js process heap memory. If the server crashes or restarts, all queued and pending events are permanently lost.
+  - **Single-Process Limitation**: `EventEmitter` cannot distribute events across multiple server instances or clusters behind a load balancer. An event emitted on Instance A is invisible to listeners running on Instance B.
+  - **No Backpressure or Retries**: Native `EventEmitter` lacks built-in message persistence, rate limiting, dead-letter queues, acknowledgment protocols, and automatic retry policies with exponential backoff. Under heavy traffic spikes, excessive event listeners can lead to memory exhaustion (`OutOfMemoryError`).
+  - **Production Alternative**: Large-scale distributed architectures use dedicated, persistent distributed message brokers such as **RabbitMQ**, **Apache Kafka**, **Redis Streams**, or **AWS SQS**.
+
+---
+
+## 6. Verification Evidence & Measured Results
+
+> **Note**: Fill in the placeholders below with actual terminal output and Postman measurements recorded during testing.
+
+### A. Terminal Timestamp Demonstration (Response vs. Background Work)
+```text
+[PASTE ACTUAL TERMINAL OUTPUT HERE]
+Example:
+[2026-10-19T14:45:00.100Z] [HTTP 201] Response sent for Task ID: <TASK_ID> | Title: "<TITLE>"
+[2026-10-19T14:45:00.102Z] [EVENT: task-created] Event received for Task ID: <TASK_ID> | Title: "<TITLE>" | User: <USER> -> Scheduling background notification (2s delay)
+[2026-10-19T14:45:02.103Z] [BACKGROUND COMPLETED] Simulated notification successfully sent for Task ID: <TASK_ID> | Title: "<TITLE>" | Sent to: <USER>
+```
+
+### B. Task Deletion Terminal Evidence
+```text
+[PASTE ACTUAL TERMINAL DELETION OUTPUT HERE]
+Example:
+[2026-10-19T14:46:15.220Z] [EVENT: task-deleted] Task deleted | Task ID: <TASK_ID> | Title: "<TITLE>" | User: <USER>
+```
+
+### C. Screenshot Placeholders
+- **Screenshot 1: Postman POST /tasks response time (< 50ms) alongside terminal timestamps showing background completion 2 seconds later.**
+  - `![POST Task Response Time & Terminal Logs](path/to/screenshot1.png)`
+- **Screenshot 2: Postman DELETE /tasks/:id response and terminal log showing `[EVENT: task-deleted]`.**
+  - `![DELETE Task Terminal Log](path/to/screenshot2.png)`
+
+
 
 
