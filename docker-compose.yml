@@ -1,0 +1,48 @@
+services:
+  frontend:
+    build: ./client
+    ports:
+      - "5173:5173"
+    environment:
+      BACKEND_URL: http://backend:5001
+    depends_on:
+      backend:
+        condition: service_started
+    networks:
+      - app-network
+
+  backend:
+    build: ./server
+    ports:
+      - "5001:5001"
+    environment:
+      PORT: 5001
+      MONGODB_URI: mongodb://mongodb:27017/AWDF_PR_7
+      JWT_SECRET: ${JWT_SECRET:-local_practical7_dev_secret_change_me}
+      JWT_EXPIRES_IN: 1h
+    depends_on:
+      mongodb:
+        condition: service_healthy
+    networks:
+      - app-network
+
+  mongodb:
+    image: mongo:7.0
+    restart: unless-stopped
+    volumes:
+      - mongodb_data:/data/db
+    networks:
+      - app-network
+    healthcheck:
+      test: ["CMD-SHELL", "mongosh --eval 'db.adminCommand(\"ping\")' --quiet"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+
+volumes:
+  mongodb_data:
+
+networks:
+  app-network:
+    driver: bridge
