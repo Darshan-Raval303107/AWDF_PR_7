@@ -67,7 +67,7 @@ export default function Auth() {
         if (res.ok && data.token) {
           login(data.token, data.user);
         } else {
-          setErrorMessage(data.error || 'Invalid credentials. Please check your details.');
+          setErrorMessage(data.error || 'Invalid credentials. If you haven\'t created an account yet, switch to "Sign Up" below.');
         }
       } catch (err) {
         console.error('Login error:', err);

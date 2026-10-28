@@ -51,6 +51,8 @@ mongoose
   .connect(MONGODB_URI)
   .then(async () => {
     console.log('Connected to MongoDB database: AWDF_PR_7');
+    
+    // Seed default tasks if empty
     const count = await Task.countDocuments();
     if (count === 0) {
       await Task.insertMany([

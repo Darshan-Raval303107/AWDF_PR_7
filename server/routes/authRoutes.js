@@ -37,10 +37,14 @@ router.post('/register', async (req, res) => {
 
     const trimmedUsername = username.trim();
     const trimmedEmail = email.trim().toLowerCase();
+    const escapedUsername = trimmedUsername.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    // Check for existing user with duplicate email or username
+    // Check for existing user with duplicate email or username (case-insensitive)
     const existingUser = await User.findOne({
-      $or: [{ email: trimmedEmail }, { username: trimmedUsername }]
+      $or: [
+        { email: trimmedEmail },
+        { username: { $regex: new RegExp(`^${escapedUsername}$`, 'i') } }
+      ]
     });
 
     if (existingUser) {
@@ -87,23 +91,24 @@ router.post('/login', async (req, res) => {
     }
 
     const trimmedIdentifier = loginIdentifier.trim();
+    const escapedIdentifier = trimmedIdentifier.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    // Find user by either email or username
+    // Find user by either email or username (case-insensitive for both)
     const user = await User.findOne({
       $or: [
         { email: trimmedIdentifier.toLowerCase() },
-        { username: trimmedIdentifier }
+        { username: { $regex: new RegExp(`^${escapedIdentifier}$`, 'i') } }
       ]
     });
 
     if (!user) {
-      return res.status(401).json({ error: 'Invalid credentials.' });
+      return res.status(401).json({ error: 'Invalid credentials. User not found. Please check your username/email or sign up.' });
     }
 
     // Verify password with bcrypt
     const isMatch = await bcrypt.compare(password, user.password);
     if (!isMatch) {
-      return res.status(401).json({ error: 'Invalid credentials.' });
+      return res.status(401).json({ error: 'Invalid credentials. Password does not match.' });
     }
 
     // Check JWT_SECRET configuration
