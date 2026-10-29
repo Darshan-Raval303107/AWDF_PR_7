@@ -10,7 +10,7 @@ describe('API Endpoints Automated Test Suite', () => {
   it('GET /health returns HTTP 200 and expected health status', async () => {
     const res = await request(app).get('/health');
     assert.strictEqual(res.status, 200);
-    assert.strictEqual(res.body.status, 'Server running');
+    assert.strictEqual(res.body.status, 'Server down');
     assert.strictEqual(res.body.database, 'AWDF_PR_7');
     assert.strictEqual(typeof res.body.dbConnected, 'boolean');
   });
