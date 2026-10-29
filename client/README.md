@@ -1,4 +1,5 @@
 # React + Vite
+[![CI Pipeline](https://github.com/Darshan-Raval303107/AWDF_PR_7/actions/workflows/ci.yml/badge.svg)](https://github.com/Darshan-Raval303107/AWDF_PR_7/actions/workflows/ci.yml)
 
 This template provides a minimal setup to get React working in Vite with HMR and some Oxlint rules.
 
@@ -459,3 +460,43 @@ Example:
 
 
 
+---
+
+# Practical 12: CI/CD Pipeline with GitHub Actions
+
+## 1. Overview & CI/CD Architecture
+Automated Continuous Integration (CI) pipeline configured using GitHub Actions to validate every commit pushed to the `main` branch. The pipeline automatically checks out code, provisions the Node.js 22 runtime, installs dependencies via reproducible package-locks, executes automated API tests, and verifies the frontend production build.
+
+- **Workflow File**: `.github/workflows/ci.yml`
+- **Trigger**: Automatic on `push` to branch `main`
+- **Runner Environment**: `ubuntu-latest`
+- **Node.js Version**: `22`
+Repository: [Repository](https://github.com/Darshan-Raval303107/AWDF_PR_7)
+Actions Tab: [GitHub Actions](https://github.com/Darshan-Raval303107/AWDF_PR_7/actions)
+
+## 2. Pipeline Execution Steps
+1. **Repository Checkout**: Retrieves source files via `actions/checkout@v4`.
+2. **Node.js Setup**: Sets up Node.js 22 environment via `actions/setup-node@v4`.
+3. **Backend Dependency Installation**: Runs `npm ci` inside `./server`.
+4. **Backend Automated Tests**: Runs `npm test` (`node --test`) inside `./server`.
+   - Tests exercise the Express server using Supertest in non-destructive test mode (`NODE_ENV=test`).
+   - **Test 1**: `GET /health` returns HTTP 200 and healthy server status (`res.body.status === 'Server running'`).
+   - **Test 2**: `GET /api/tasks` without Authorization header returns HTTP 401 Unauthorized via `authMiddleware` (`res.body.error === 'Access denied. Missing or malformed token.'`).
+5. **Frontend Dependency Installation**: Runs `npm ci` inside `./client`.
+6. **Frontend Production Build**: Runs `npm run build` (`vite build`) inside `./client` to verify bundle compilation and asset generation.
+
+## 3. Deliberate Failure Demonstration and Resolution
+
+### A. Initial CI Setup (Passing)
+- **Commit**: `9d9ce5e` (`Practical 12: Add GitHub Actions CI pipeline and API tests`)
+- **Outcome**: Both backend tests passed (`2 pass, 0 fail`), Vite build succeeded, and the workflow run completed with green passing status.
+
+### B. Deliberate Test Failure (Failing Run Evidence)
+- **Commit**: `f3817a4` (`Practical 12: Demonstrate failing CI test`)
+- **Change**: Temporarily changed `GET /health` expected status assertion from `'Server running'` to `'Server down'` in `server/test/api.test.js`.
+- **Outcome**: `node --test` detected the discrepancy and failed with `AssertionError: Expected 'Server running' to strictly equal 'Server down'`. GitHub Actions runner terminated with exit code `1`, accurately flagging the broken build in the GitHub Actions dashboard.
+
+### C. Resolution and Restoration (Passing Pipeline)
+- **Commit**: `4f603cb` (`Practical 12: Fix failing API test`)
+- **Change**: Restored the assertion back to `'Server running'` in `server/test/api.test.js`.
+- **Outcome**: Both backend tests passed (`2 pass, 0 fail`), client production build completed cleanly in ~9 seconds, and the CI status badge returned to passing (`green`).
