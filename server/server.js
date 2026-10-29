@@ -46,26 +46,28 @@ const taskSchema = new mongoose.Schema(
 
 const Task = mongoose.model('Task', taskSchema);
 
-// Connect to MongoDB database: AWDF_PR_7
-mongoose
-  .connect(MONGODB_URI)
-  .then(async () => {
-    console.log('Connected to MongoDB database: AWDF_PR_7');
-    
-    // Seed default tasks if empty
-    const count = await Task.countDocuments();
-    if (count === 0) {
-      await Task.insertMany([
-        { title: 'Learn React Functional Components', description: 'Understand hooks, state, and props', priority: 'High' },
-        { title: 'Build Express REST API', description: 'Create CRUD endpoints with Express and CORS', priority: 'Medium' },
-        { title: 'Connect Frontend to Backend with Fetch', description: 'Use async fetch to sync React state with MongoDB', priority: 'Low' }
-      ]);
-      console.log('Seeded initial tasks into AWDF_PR_7 database');
-    }
-  })
-  .catch((err) => {
-    console.error('MongoDB connection error:', err.message);
-  });
+// Connect to MongoDB database: AWDF_PR_7 (only when not in test environment)
+if (process.env.NODE_ENV !== 'test') {
+  mongoose
+    .connect(MONGODB_URI)
+    .then(async () => {
+      console.log('Connected to MongoDB database: AWDF_PR_7');
+      
+      // Seed default tasks if empty
+      const count = await Task.countDocuments();
+      if (count === 0) {
+        await Task.insertMany([
+          { title: 'Learn React Functional Components', description: 'Understand hooks, state, and props', priority: 'High' },
+          { title: 'Build Express REST API', description: 'Create CRUD endpoints with Express and CORS', priority: 'Medium' },
+          { title: 'Connect Frontend to Backend with Fetch', description: 'Use async fetch to sync React state with MongoDB', priority: 'Low' }
+        ]);
+        console.log('Seeded initial tasks into AWDF_PR_7 database');
+      }
+    })
+    .catch((err) => {
+      console.error('MongoDB connection error:', err.message);
+    });
+}
 
 // Authentication Routes (/register, /login, /me, /api/register, /api/login, /api/me)
 app.use('/api', authRoutes);
@@ -204,6 +206,11 @@ app.get('/health', (req, res) => {
   });
 });
 
-app.listen(PORT, () => {
-  console.log(`Server running on http://localhost:${PORT}`);
-});
+if (process.env.NODE_ENV !== 'test') {
+  app.listen(PORT, () => {
+    console.log(`Server running on http://localhost:${PORT}`);
+  });
+}
+
+export default app;
+export { app };
