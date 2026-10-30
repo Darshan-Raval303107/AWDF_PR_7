@@ -7,6 +7,7 @@ import mongoose from 'mongoose';
 import NodeCache from 'node-cache';
 import User from './models/User.js';
 import authRoutes from './routes/authRoutes.js';
+import aiRoutes from './routes/aiRoutes.js';
 import authMiddleware from './middleware/authMiddleware.js';
 import validateTaskInput from './middleware/validateTaskInput.js';
 import taskEmitter from './events/taskEmitter.js';
@@ -72,6 +73,10 @@ if (process.env.NODE_ENV !== 'test') {
 // Authentication Routes (/register, /login, /me, /api/register, /api/login, /api/me)
 app.use('/api', authRoutes);
 app.use('/', authRoutes);
+
+// AI Assistant Routes (/api/ai/generate-description, /ai/generate-description)
+app.use('/api/ai', aiRoutes);
+app.use('/ai', aiRoutes);
 
 // Helper to support both /tasks and /api/tasks routes with in-memory caching
 const handleGetTasks = async (req, res) => {
