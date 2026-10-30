@@ -21,7 +21,8 @@ import {
   CheckCheck,
   Clock,
   User as UserIcon,
-  ShieldCheck
+  ShieldCheck,
+  Sparkles
 } from 'lucide-react';
 import { useAuth } from '../context/AuthContext';
 import './TodoApp.css';
@@ -34,6 +35,7 @@ export default function TodoApp() {
 
   const apiFetch = async (endpoint = '', options = {}) => {
     const headers = {
+      'Content-Type': 'application/json',
       ...options.headers,
       ...(token ? { Authorization: `Bearer ${token}` } : {})
     };
@@ -43,11 +45,17 @@ export default function TodoApp() {
       headers
     };
 
+    const isDirectApi = endpoint.startsWith('/api/');
+    const primaryUrl = isDirectApi ? endpoint : `${API_URL}${endpoint}`;
+    const fallbackUrl = isDirectApi
+      ? `http://localhost:5001${endpoint}`
+      : `${FALLBACK_URL}${endpoint}`;
+
     let res;
     try {
-      res = await fetch(`${API_URL}${endpoint}`, requestOptions);
+      res = await fetch(primaryUrl, requestOptions);
     } catch {
-      res = await fetch(`${FALLBACK_URL}${endpoint}`, requestOptions);
+      res = await fetch(fallbackUrl, requestOptions);
     }
 
     if (res && res.status === 401) {
@@ -73,6 +81,7 @@ export default function TodoApp() {
   const [updatingId, setUpdatingId] = useState(null);
   const [deletingTask, setDeletingTask] = useState(null);
   const [isDeleting, setIsDeleting] = useState(false);
+  const [isGeneratingAi, setIsGeneratingAi] = useState(false);
   const [dbStatus, setDbStatus] = useState('Connecting to MongoDB...');
   
   // Toast Notification state
@@ -118,6 +127,44 @@ export default function TodoApp() {
   const totalCount = tasks.length;
   const completedCount = tasks.filter((t) => t.completed).length;
   const pendingCount = totalCount - completedCount;
+
+  // Generate description using backend OpenAI integration
+  const handleGenerateAiDescription = async () => {
+    const title = inputTitle.trim();
+    if (!title) {
+      showToast('Please enter a task title first.', 'error');
+      return;
+    }
+
+    if (isGeneratingAi) return;
+
+    try {
+      setIsGeneratingAi(true);
+      const res = await apiFetch('/api/ai/generate-description', {
+        method: 'POST',
+        body: JSON.stringify({ title })
+      });
+
+      if (!res) {
+        throw new Error('No response from server');
+      }
+
+      const data = await res.json().catch(() => null);
+
+      if (res.ok && data?.description) {
+        setInputDescription(data.description);
+        showToast('AI description generated successfully!', 'success');
+      } else {
+        const errorMsg = data?.error || 'Failed to generate AI description. Please try again.';
+        showToast(errorMsg, 'error');
+      }
+    } catch (err) {
+      console.error('AI generation error:', err);
+      showToast('Could not reach AI service. Please check your network connection.', 'error');
+    } finally {
+      setIsGeneratingAi(false);
+    }
+  };
 
   // 2. Add task with Description, Priority (default Low) & Optimistic UI Update
   const handleAddTask = async (e) => {
@@ -484,16 +531,48 @@ export default function TodoApp() {
               </button>
             </div>
 
-            {/* Description Box */}
+            {/* Description Box & AI Assistant */}
             <div className="form-desc-row">
+              <div className="desc-header-row">
+                <label className="desc-label" htmlFor="task-desc-input">
+                  Description <span className="desc-optional">(optional)</span>
+                </label>
+                <button
+                  type="button"
+                  onClick={handleGenerateAiDescription}
+                  disabled={isGeneratingAi || submitting || !inputTitle.trim()}
+                  className={`ai-generate-btn ${isGeneratingAi ? 'loading' : ''}`}
+                  title={
+                    !inputTitle.trim()
+                      ? 'Enter a task title first to generate an AI description'
+                      : 'Generate description using AI'
+                  }
+                >
+                  {isGeneratingAi ? (
+                    <>
+                      <Loader2 size={13} className="spinning" />
+                      <span>Generating...</span>
+                    </>
+                  ) : (
+                    <>
+                      <Sparkles size={13} />
+                      <span>Generate with AI</span>
+                    </>
+                  )}
+                </button>
+              </div>
               <textarea
-                placeholder="Description (optional) - Add notes or requirements for this task..."
+                id="task-desc-input"
+                placeholder="Description (optional) - Add notes or click 'Generate with AI'..."
                 value={inputDescription}
                 onChange={(e) => setInputDescription(e.target.value)}
                 className="todo-desc-input"
                 rows={2}
-                disabled={submitting}
+                disabled={submitting || isGeneratingAi}
               />
+              <p className="ai-disclaimer-text">
+                AI suggestions may contain inaccuracies. Please review and edit before saving.
+              </p>
             </div>
           </form>
 
