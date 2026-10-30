@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   CheckCircle2, 
@@ -86,6 +86,24 @@ export default function TodoApp() {
   
   // Toast Notification state
   const [toast, setToast] = useState({ show: false, message: '', type: 'success' });
+
+  // Auto-resize description textarea based on content
+  const descTextareaRef = useRef(null);
+  const editDescTextareaRef = useRef(null);
+
+  useEffect(() => {
+    if (descTextareaRef.current) {
+      descTextareaRef.current.style.height = 'auto';
+      descTextareaRef.current.style.height = `${Math.max(56, descTextareaRef.current.scrollHeight)}px`;
+    }
+  }, [inputDescription]);
+
+  useEffect(() => {
+    if (editDescTextareaRef.current) {
+      editDescTextareaRef.current.style.height = 'auto';
+      editDescTextareaRef.current.style.height = `${Math.max(56, editDescTextareaRef.current.scrollHeight)}px`;
+    }
+  }, [editingDescription]);
 
   const showToast = (message, type = 'success') => {
     setToast({ show: true, message, type });
@@ -356,6 +374,34 @@ export default function TodoApp() {
 
       {/* Delete Confirmation Modal Dialog */}
       <AnimatePresence>
+        {isGeneratingAi && (
+          <div className="modal-backdrop ai-loading-backdrop">
+            <motion.div
+              className="modal-content glass-card ai-loading-card"
+              initial={{ opacity: 0, scale: 0.88, y: 15 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.88, y: 15 }}
+              transition={{ duration: 0.2 }}
+            >
+              <div className="ai-big-spinner-wrapper">
+                <div className="ai-big-spinner-ring"></div>
+                <Sparkles size={34} className="ai-big-sparkles-icon" />
+              </div>
+              <h3 className="ai-loading-title">Generating Description</h3>
+              <p className="ai-loading-subtitle">
+                Gemini AI is crafting concise, actionable action points for:
+              </p>
+              <div className="ai-loading-task-preview">
+                "{inputTitle.trim()}"
+              </div>
+              <div className="ai-loading-pulse-bar">
+                <div className="ai-loading-pulse-fill"></div>
+              </div>
+              <p className="ai-loading-hint">Please wait, completing in ~5 seconds...</p>
+            </motion.div>
+          </div>
+        )}
+
         {deletingTask && (
           <div className="modal-backdrop">
             <motion.div 
@@ -563,6 +609,7 @@ export default function TodoApp() {
               </div>
               <textarea
                 id="task-desc-input"
+                ref={descTextareaRef}
                 placeholder="Description (optional) - Add notes or click 'Generate with AI'..."
                 value={inputDescription}
                 onChange={(e) => setInputDescription(e.target.value)}
@@ -621,6 +668,7 @@ export default function TodoApp() {
                         </div>
                         <div className="edit-row-desc">
                           <textarea
+                            ref={editDescTextareaRef}
                             value={editingDescription}
                             onChange={(e) => setEditingDescription(e.target.value)}
                             className="edit-desc-input"

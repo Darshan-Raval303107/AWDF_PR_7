@@ -47,7 +47,6 @@ describe('API Endpoints Automated Test Suite', () => {
   };
 
   before(() => {
-    // Mock User.findById so authenticated route tests do not depend on a live MongoDB connection
     mock.method(User, 'findById', (id) => ({
       select: () =>
         Promise.resolve({
@@ -133,23 +132,43 @@ describe('API Endpoints Automated Test Suite', () => {
     );
   });
 
-  it('POST /api/ai/generate-description returns HTTP 200 with complete description on Gemini success', async () => {
+  it('POST /api/ai/generate-description returns HTTP 504 when Gemini API times out', async () => {
     process.env.GEMINI_API_KEY = 'mock_test_key';
-    const mockGeneratedText =
-      'Review core React concepts including state management, props, and hooks. Practice building responsive components with Vite and test them thoroughly. Ensure all lifecycle methods and performance optimizations are understood before the exam.';
+    globalThis.fetch = async () => {
+      const timeoutErr = new Error('The operation was aborted due to timeout');
+      timeoutErr.name = 'TimeoutError';
+      throw timeoutErr;
+    };
+
+    const res = await request(app)
+      .post('/api/ai/generate-description')
+      .set('Authorization', `Bearer ${validTokenUser1}`)
+      .send({ title: 'Timeout Test Task' });
+
+    assert.strictEqual(res.status, 504);
+    assert.strictEqual(res.body.error, 'AI service request timed out. Please try again.');
+  });
+
+  it('POST /api/ai/generate-description returns exactly 3 concise, complete bullet points on success', async () => {
+    process.env.GEMINI_API_KEY = 'mock_test_key';
+    const mockRawOutput = `- Revise React fundamentals, JSX, components, props, and state.
+- Practice useState, useEffect, event handling, and component lifecycle concepts.
+- Solve practical React questions and review important examination topics.`;
 
     globalThis.fetch = async (url, options) => {
-      assert.ok(String(url).includes('gemini-3.8-flash:generateContent'));
+      assert.ok(String(url).includes('gemini-3.5-flash:generateContent'));
       assert.strictEqual(options.headers['x-goog-api-key'], 'mock_test_key');
       const body = JSON.parse(options.body);
-      assert.ok(body.contents[0].parts[0].text.includes('Unique Task Title For Success Test'));
+      assert.ok(body.contents[0].parts[0].text.includes('Prepare for React examination'));
+      assert.strictEqual(body.generationConfig.maxOutputTokens, 180);
+      assert.strictEqual(body.generationConfig.thinkingConfig.thinkingBudget, 0);
 
       return new Response(
         JSON.stringify({
           candidates: [
             {
               content: {
-                parts: [{ text: mockGeneratedText }]
+                parts: [{ text: mockRawOutput }]
               }
             }
           ]
@@ -161,43 +180,49 @@ describe('API Endpoints Automated Test Suite', () => {
     const res = await request(app)
       .post('/api/ai/generate-description')
       .set('Authorization', `Bearer ${validTokenUser1}`)
-      .send({ title: 'Unique Task Title For Success Test' });
+      .send({ title: 'Prepare for React examination' });
 
     assert.strictEqual(res.status, 200);
-    assert.strictEqual(res.body.description, mockGeneratedText);
     assert.strictEqual(res.body.generatedBy, 'ai');
-    assert.ok(/[.!?]$/.test(res.body.description), 'Description must end with proper punctuation');
+    assert.strictEqual(res.body.description, mockRawOutput);
+
+    const bullets = res.body.description.split('\n');
+    assert.strictEqual(bullets.length, 3, 'Should contain exactly 3 bullet points');
+    for (const bullet of bullets) {
+      assert.ok(bullet.startsWith('- '), 'Bullet point must start with "- "');
+      assert.ok(/[.!?]$/.test(bullet), 'Bullet point must end with terminal punctuation');
+    }
   });
 
-  it('POST /api/ai/generate-description trims trailing incomplete sentence while preserving complete sentences', async () => {
+  it('POST /api/ai/generate-description formats raw multi-line response into 3 clean bullet points', async () => {
     process.env.GEMINI_API_KEY = 'mock_test_key';
-    const rawCutoffText =
-      'Review core React concepts including state management and hooks. Practice building functional components with Vite. Read about';
-    const expectedCleanedText =
-      'Review core React concepts including state management and hooks. Practice building functional components with Vite.';
+    const rawUnformatted = `1. Complete AWDF Practical 7 implementation
+2. Verify all unit tests and Docker setup
+3. Document findings in the lab report`;
 
-    globalThis.fetch = mockSuccessfulGeminiResponse(rawCutoffText);
+    const expectedFormatted = `- Complete AWDF Practical 7 implementation.
+- Verify all unit tests and Docker setup.
+- Document findings in the lab report.`;
+
+    globalThis.fetch = mockSuccessfulGeminiResponse(rawUnformatted);
 
     const res = await request(app)
       .post('/api/ai/generate-description')
       .set('Authorization', `Bearer ${validTokenUser1}`)
-      .send({ title: 'Task Truncation Test' });
+      .send({ title: 'Complete AWDF Practical 7' });
 
     assert.strictEqual(res.status, 200);
-    assert.strictEqual(res.body.description, expectedCleanedText);
-    assert.ok(/[.!?]$/.test(res.body.description));
+    assert.strictEqual(res.body.description, expectedFormatted);
   });
 
-  it('POST /api/ai/generate-description safely rejects incomplete fragment without terminal punctuation', async () => {
+  it('POST /api/ai/generate-description safely rejects incomplete empty response', async () => {
     process.env.GEMINI_API_KEY = 'mock_test_key';
-    const fragmentWithoutAnySentence = 'Review core React concepts including';
-
-    globalThis.fetch = mockSuccessfulGeminiResponse(fragmentWithoutAnySentence);
+    globalThis.fetch = mockSuccessfulGeminiResponse('');
 
     const res = await request(app)
       .post('/api/ai/generate-description')
       .set('Authorization', `Bearer ${validTokenUser1}`)
-      .send({ title: 'Task Fragment Rejection Test' });
+      .send({ title: 'Empty Output Task' });
 
     assert.strictEqual(res.status, 502);
     assert.strictEqual(
@@ -209,8 +234,9 @@ describe('API Endpoints Automated Test Suite', () => {
   // --- Server-Side Rate Limiting (60-second cooldown per user & task title) ---
   describe('Server-Side Rate Limiting (60-second cooldown)', () => {
     const rateLimitTaskTitle = 'Prepare sprint review slides';
-    const defaultMockText =
-      'Gather sprint metrics and task completion stats. Draft slides highlighting achievements and blockers. Rehearse presentation for the stakeholder meeting.';
+    const defaultMockText = `- Gather sprint metrics and task completion stats.
+- Draft slides highlighting achievements and blockers.
+- Rehearse presentation for the stakeholder meeting.`;
 
     before(() => {
       process.env.GEMINI_API_KEY = 'mock_test_key';
@@ -269,7 +295,6 @@ describe('API Endpoints Automated Test Suite', () => {
     it('5. Request is allowed again after the 60-second cooldown expires', async () => {
       globalThis.fetch = mockSuccessfulGeminiResponse(defaultMockText);
 
-      // Simulate the 60-second TTL expiration using the cache instance
       const cacheKey = `ai_cooldown:${user1Id}:${rateLimitTaskTitle.toLowerCase()}`;
       aiRateLimitCache.ttl(cacheKey, -1);
 

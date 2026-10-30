@@ -8,11 +8,14 @@ const router = express.Router();
 export const aiRateLimitCache = new NodeCache({ stdTTL: 60, checkperiod: 120 });
 
 const GEMINI_API_URL =
-  'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent';
+  'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.5-flash:generateContent';
+
+// Request timeout for Gemini API calls (5 seconds)
+const GEMINI_REQUEST_TIMEOUT_MS = 5000;
 
 /**
  * @route   POST /api/ai/generate-description
- * @desc    Generate a complete, professional task description using Google Gemini REST API (gemini-3.8-flash)
+ * @desc    Generate exactly 3 concise, professional, and actionable bullet points using Google Gemini REST API
  * @access  Private (Protected by authMiddleware)
  */
 router.post('/generate-description', authMiddleware, async (req, res) => {
@@ -48,7 +51,7 @@ router.post('/generate-description', authMiddleware, async (req, res) => {
       });
     }
 
-    // Call Google Gemini REST API using Node.js native fetch with x-goog-api-key header
+    // Call Google Gemini REST API using Node.js native fetch with timeout signal
     const response = await fetch(GEMINI_API_URL, {
       method: 'POST',
       headers: {
@@ -60,7 +63,7 @@ router.post('/generate-description', authMiddleware, async (req, res) => {
           parts: [
             {
               text:
-                'You are a professional assistant that generates clear, complete, and actionable task descriptions. Given a task title, write 2 to 4 complete sentences outlining concrete action items, objectives, and deliverables. Ensure every sentence is fully finished and ends with proper punctuation (. ! ?). Never produce trailing phrases, headings, bullet points, introductory text, quotation marks, or incomplete thoughts.'
+                'You are an expert AI task assistant that writes concise, professional, and actionable task descriptions. Given a task title, generate exactly 3 plain-text bullet points. Each bullet point must start with "- " and describe a specific action, objective, or expected outcome directly relevant to the task title. For specific titles, provide task-specific action points. For broad or vague titles, provide broadly useful and relevant action points without assuming unmentioned starter code, specific endpoints, particular technologies, tools, or deadlines. Avoid repeating the task title and avoid generic filler. Use simple, professional English. Ensure every bullet point is a complete, finished sentence ending with a period. Return only the 3 bullet points with no introductory or concluding text.'
             }
           ]
         },
@@ -68,16 +71,20 @@ router.post('/generate-description', authMiddleware, async (req, res) => {
           {
             parts: [
               {
-                text: `Write a complete 2 to 4 sentence actionable task description for: "${trimmedTitle}".`
+                text: `Generate exactly 3 concise, meaningful bullet points for the task: "${trimmedTitle}".`
               }
             ]
           }
         ],
         generationConfig: {
-          maxOutputTokens: 350,
-          temperature: 0.7
+          maxOutputTokens: 180,
+          temperature: 0.2,
+          thinkingConfig: {
+            thinkingBudget: 0
+          }
         }
-      })
+      }),
+      signal: AbortSignal.timeout(GEMINI_REQUEST_TIMEOUT_MS)
     });
 
     if (!response.ok) {
@@ -97,22 +104,25 @@ router.post('/generate-description', authMiddleware, async (req, res) => {
     const candidate = data.candidates?.[0];
     const generatedRaw = candidate?.content?.parts?.[0]?.text?.trim() || '';
 
-    let cleanedDescription = generatedRaw;
+    // Extract, format, and ensure exactly 3 plain-text bullet points
+    const lines = generatedRaw
+      .split('\n')
+      .map((line) => line.trim())
+      .filter((line) => line.length > 0);
 
-    // Guard against mid-sentence truncation: keep only complete sentences if cut off
-    if (cleanedDescription && !/[.!?]$/.test(cleanedDescription)) {
-      const lastPunctuationIndex = Math.max(
-        cleanedDescription.lastIndexOf('.'),
-        cleanedDescription.lastIndexOf('!'),
-        cleanedDescription.lastIndexOf('?')
-      );
-      if (lastPunctuationIndex > 20) {
-        cleanedDescription = cleanedDescription
-          .slice(0, lastPunctuationIndex + 1)
-          .trim();
-      } else {
-        cleanedDescription = '';
-      }
+    const bulletItems = lines
+      .map((line) => line.replace(/^[-*•\d.)\s]+/, '').trim())
+      .filter((item) => item.length > 5);
+
+    const completeBullets = bulletItems.slice(0, 3).map((item) => {
+      return /[.!?]$/.test(item) ? item : `${item}.`;
+    });
+
+    let cleanedDescription = '';
+    if (completeBullets.length >= 3) {
+      cleanedDescription = completeBullets.map((b) => `- ${b}`).join('\n');
+    } else if (completeBullets.length > 0) {
+      cleanedDescription = completeBullets.map((b) => `- ${b}`).join('\n');
     }
 
     if (!cleanedDescription) {
@@ -130,6 +140,13 @@ router.post('/generate-description', authMiddleware, async (req, res) => {
       generatedBy: 'ai'
     });
   } catch (err) {
+    if (err.name === 'TimeoutError' || err.name === 'AbortError') {
+      console.error('[AI Route Timeout]', err.message);
+      return res.status(504).json({
+        error: 'AI service request timed out. Please try again.'
+      });
+    }
+
     console.error('[AI Route Error]', err.name || 'Error');
     return res.status(500).json({
       error: 'An internal error occurred while generating the task description.'
